@@ -4,87 +4,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Static HTML/CSS portfolio website deployed to AWS using S3 + CloudFront, provisioned with Terraform, and automated via GitHub Actions.
+Static HTML/CSS portfolio website deployed to AWS using S3 and CloudFront, provisioned with Terraform, and automated via GitHub Actions.
+
+There is no build step, no JavaScript, no package manager, no tests, and no linter. "Building" means editing the HTML/CSS files directly.
 
 ## Architecture
 
-### Application (Static Site)
-- **index.html** — Single-page portfolio (About, Services, Courses, Books, Community, Contact)
-- **style.css** — All styling (~1145 lines), mobile-first responsive (breakpoints: 900px, 768px, 600px)
-- **privacy.html / terms.html** — Standalone pages with inline styles
-- **images/** — Static assets (logo, profile, course thumbnails, hero background)
-- Pure HTML5 + CSS3, no JavaScript, no build step
+Pure HTML5 and CSS3. No JavaScript. No build step. No framework
 
-### Infrastructure (`terraform/`)
-- AWS S3 bucket for static site hosting (private, OAC-based access)
-- CloudFront distribution as CDN with S3 origin
-- GitHub OIDC provider + IAM role for keyless CI/CD auth
-- Terraform state stored in S3 backend with DynamoDB locking
-- All resources tagged with `Project` and `Environment`
+### Site
+- `index.html` — single-page portfolio (About, Services, Courses, Books, Community, Contact); shares `style.css`.
+- `privacy.html` / `terms.html` — standalone pages with their own inline styles (changes to `style.css` do not affect them).
+- `style.css` — all shared styling, mobile-first responsive with breakpoints at 900px, 768px, 600px.
+- The site root is the repo root: every file not excluded by the S3 sync gets published. New non-site files at the root (configs, notes) must be added to the sync `--exclude` list in both `.github/workflows/deploy.yml` and `.claude/skills/deploy/SKILL.md`.
 
-### CI/CD (`.github/workflows/`)
-- GitHub Actions workflow triggers on push to `main`
-- Syncs site files to S3, then invalidates CloudFront cache
-- Uses OIDC for AWS authentication (no long-lived keys)
+### Infrastructure (`terraform/` — not yet generated)
+`terraform/` does not exist in the repo yet; it is produced by the `/scaffold-terraform` skill from `.claude/skills/scaffold-terraform/template-spec.md`. That spec is the source of truth: private S3 bucket + CloudFront **OAC** (not legacy OAI), `index.html` default root, 404 → `/index.html` (200), redirect-to-https, `PriceClass_200`, `CachingOptimized` policy, `Project`/`Environment` tags. The S3 state backend in `backend.tf` starts commented out — apply once with local state, then uncomment and `terraform init -migrate-state`.
 
-## MCP Servers (`.mcp.json`)
+Terraform outputs (`cloudfront_distribution_id`, `cloudfront_domain_name`, `s3_bucket_name`, `s3_bucket_arn`) are what the `/deploy` skill reads, so keep those output names stable.
 
-Two MCP servers are configured for Claude Code:
-- **aws** (`awslabs.aws-api-mcp-server`) — Direct AWS API access for querying and managing resources
-- **terraform** (`hashicorp/terraform-mcp-server`) — Terraform operations via Docker, workspace mounted at `/workspace`
+### CI/CD (`.github/workflows/deploy.yml`)
+On push to `main`: assumes an AWS role via GitHub OIDC (no stored keys), `aws s3 sync . s3://<bucket> --delete` with excludes, then invalidates CloudFront `/*`.
 
-AWS credentials and region are configured in `.claude/settings.local.json` (gitignored), not in `.mcp.json`. This keeps secrets out of version control and provides a single source of truth for all tools.
-
-## Custom Agents (`.claude/agents/`)
-
-This project has 4 specialized subagents. Use them by name when delegating tasks:
-- **tf-writer** — generates Terraform code (has Write access + project memory)
-- **security-auditor** — audits TF for security issues (Read-only, Sonnet)
-- **cost-optimizer** — reviews infra cost (Read-only, Haiku)
-- **drift-detector** — detects state drift (Bash, Haiku)
+The workflow currently **hardcodes** the course author's AWS account ID, role ARN, region (`eu-north-1`), bucket name, and distribution ID. These do not come from Terraform outputs and must be updated to match this fork's infrastructure. The OIDC provider and IAM role are not part of the Terraform template spec.
 
 ## Skills (`.claude/skills/`)
 
-All infrastructure and deployment tasks are handled via skills. Do not write Terraform or CI/CD code manually — use the appropriate skill. Action skills have `disable-model-invocation: true` (manual only). The `project-scope` skill has `user-invocable: false` (auto-loaded by Claude as background knowledge).
+Infrastructure and deployment work goes through these skills (all `disable-model-invocation: true`, so the user must invoke them):
 
 ```
-/scaffold-terraform [region] [name]  → Generate all Terraform files (uses tf-writer agent)
-/scaffold-cicd [aws-account-id]      → Generate GitHub Actions + OIDC IAM role
-/tf-plan                             → Run terraform plan + risk analysis
-/tf-apply                            → Run terraform apply + verify
-/deploy                              → Sync S3 + invalidate CloudFront
-/infra-status                        → Health dashboard of all resources
-/infra-audit                         → Parallel security + cost + drift audit (forked context)
-/setup-gh-actions [create|validate]  → Create or validate CI workflow
-/tf-destroy                          → Safe destroy with confirmation
-project-scope                        → Background knowledge: AWS service constraints (auto-loaded)
-/commit                              → Auto-generate commit message (built-in)
-/compact                             → Compress long conversation context (built-in)
+/scaffold-terraform [region] [project-name]  → generate terraform/ from template-spec.md (defaults: ap-south-1, portfolio-site)
+/tf-plan                                     → terraform plan + risk/blast-radius summary
+/tf-apply                                    → terraform apply -auto-approve + verify CloudFront is "Deployed"; never auto-retry on failure
+/deploy                                      → read terraform outputs, s3 sync, CloudFront invalidation; stop on first failure
 ```
 
 ## Commands
 
 ```bash
-# Terraform
-cd terraform && terraform init
-cd terraform && terraform plan
-cd terraform && terraform apply
+# Local preview — just open the file in a browser (Windows)
+start index.html
 
-# Local preview
-open index.html
+# Terraform (after /scaffold-terraform)
+cd terraform && terraform init && terraform plan
+cd terraform && terraform init && terraform plan && terraform apply
 
-# Manual S3 sync (CI does this automatically)
-aws s3 sync . s3://$BUCKET_NAME --exclude "terraform/*" --exclude ".git/*" --exclude ".github/*" --exclude "*.md" --exclude ".claude/*"
+# Manual deploy (CI does this on push to main)
+aws s3 sync . s3://$BUCKET_NAME --delete --exclude ".git/*" --exclude ".github/*" --exclude ".claude/*" --exclude "terraform/*" --exclude ".mcp.json" --exclude "*.md"
+aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
 ```
 
-## Safety Layers
-1. **UserPromptSubmit hook** — catches destructive intent ("delete all", "nuke", "wipe") before Claude starts
-2. **PreToolUse hook** — blocks dangerous commands (terraform destroy, aws s3 rm) at execution time
-3. **Permissions** — auto-allows safe reads, blocks IAM and rm -rf
-4. **PostToolUse hook** — logs all terraform apply executions to `.claude/deploy.log`
-
 ## Conventions
-- Terraform files use `terraform/` directory with standard layout (main.tf, variables.tf, outputs.tf)
-- GitHub Actions uses OIDC — no stored AWS access keys
+- All AWS changes go through Terraform; don't modify resources manually.
+- Pushing to `main` deploys to production.
+- DMI ownership rule (from README): before deploying, the footer in `index.html` must include a visible "Deployed by:" line (cohort, name, group, week, date) alongside the existing "Crafted with cloud excellence by Pravin Mishra" line.
+- The README describes the Week 1 alternative (Ubuntu VM + Nginx, served at `http://<public-ip>`); the S3/CloudFront path above is the one this repo's tooling targets.
 - All infrastructure changes go through Terraform — never modify AWS resources manually
-- Site content changes deploy automatically via GitHub Actions on push to main
+- No JavaScript in this project
+- CSS uses mobile-first approach with breakpoints at 900px, 768px, and 600px
+
+
+## Safety
+- Never put secrets in this file. No API keys, passwords, or AWS credentials.
