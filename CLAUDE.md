@@ -6,16 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Static HTML/CSS portfolio website deployed to AWS using S3 and CloudFront, provisioned with Terraform, and automated via GitHub Actions.
 
-There is no build step, no JavaScript, no package manager, no tests, and no linter. "Building" means editing the HTML/CSS files directly.
+There is no build step, no package manager, no tests, and no linter. "Building" means editing the HTML/CSS/JS files directly.
 
 ## Architecture
 
-Pure HTML5 and CSS3. No JavaScript. No build step. No framework
+HTML5 and CSS3, plus one React component loaded from CDN. No build step, no bundler, no JSX.
 
 ### Site
 - `index.html` — single-page portfolio (About, Services, Courses, Books, Community, Contact); shares `style.css`.
 - `privacy.html` / `terms.html` — standalone pages with their own inline styles (changes to `style.css` do not affect them).
 - `style.css` — all shared styling, mobile-first responsive with breakpoints at 900px, 768px, 600px.
+- `js/testimonials.js` — React testimonials carousel mounted into `#testimonials-root` in the Community section. Testimonial data lives in the `TESTIMONIALS` array at the top of the file.
 - The site root is the repo root: every file not excluded by the S3 sync gets published. New non-site files at the root (configs, notes) must be added to the sync `--exclude` list in both `.github/workflows/deploy.yml` and `.claude/skills/deploy/SKILL.md`.
 
 ### Infrastructure (`terraform/` — not yet generated)
@@ -60,7 +61,7 @@ aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
 - DMI ownership rule (from README): before deploying, the footer in `index.html` must include a visible "Deployed by:" line (cohort, name, group, week, date) alongside the existing "Crafted with cloud excellence by Pravin Mishra" line.
 - The README describes the Week 1 alternative (Ubuntu VM + Nginx, served at `http://<public-ip>`); the S3/CloudFront path above is the one this repo's tooling targets.
 - All infrastructure changes go through Terraform — never modify AWS resources manually
-- No JavaScript in this project
+- JavaScript is limited to React components in `js/`, using React 18 UMD + `htm` from CDN (with SRI hashes in `index.html`). No JSX, no npm, no build step. Keep everything else plain HTML/CSS.
 - CSS uses mobile-first approach with breakpoints at 900px, 768px, and 600px
 
 
