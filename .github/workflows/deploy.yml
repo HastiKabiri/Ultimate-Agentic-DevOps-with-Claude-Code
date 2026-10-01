@@ -1,9 +1,9 @@
 name: Deploy
 
+# Manual only: the AWS role below doesn't trust this fork yet, so running on
+# every push just fails. Re-add `push: branches: [main]` once AWS OIDC is set up.
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   id-token: write
