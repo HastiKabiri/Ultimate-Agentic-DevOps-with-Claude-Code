@@ -1,0 +1,1 @@
+- [Portfolio Site Infrastructure](cost-optimizer/project_infrastructure.md) — Static S3+CloudFront site; ~$0.22/month; security recommendations cost ~$0.005/month incrementally

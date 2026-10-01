@@ -33,6 +33,7 @@ jobs:
             --exclude ".claude/*" \
             --exclude "terraform/*" \
             --exclude ".mcp.json" \
+            --exclude ".gitignore" \
             --exclude "*.md" \
             --exclude "CLAUDE.md"
 
